@@ -17,7 +17,7 @@ async function main() {
   const page = await context.newPage();
   page.setDefaultTimeout(300000);
   const t0 = Date.now();
-  await page.goto(`${LIVE}?bench=1`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${LIVE}?bench=1`, { waitUntil: 'networkidle', timeout: 120000 });
   await page.waitForFunction(() => window.__mrjTrialBoot && window.__mrjPronounceBench && document.getElementById('modelLabel')?.classList.contains('done'), {
     timeout: 300000,
   });
