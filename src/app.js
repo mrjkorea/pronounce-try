@@ -28,14 +28,14 @@ import {
   timerRunning,
   timerSeconds,
   tryTeacherPassword,
-} from './flow.js?v=20261005-words2';
+} from './flow.js?v=20261013-da52';
 import {
   DOOR_CHECKING_TEXT,
   DOOR_FAIL_TEXT,
-  bootAssetPaths,
+  bootCorePaths,
   bootTrialInPage,
   gradeTrialSamples,
-} from './trial.js?v=20261010-citrinet';
+} from './trial.js?v=20261013-da52';
 
 const HEAR_BASE = 'https://mrjkorea.github.io/day4-speak/';
 const LOCAL_HEAR = new Set([
@@ -296,11 +296,26 @@ function markModelReady() {
   if (!modelLabel || !modelTrack) return;
   modelLabel.classList.add('done');
   modelTrack.classList.add('done');
+  exposeBenchHook();
 }
 
 export function pathsBootWillFetch() {
-  if (GRADER === 'citrinet-trial') return bootAssetPaths();
+  if (GRADER === 'citrinet-trial') return bootCorePaths();
   return ['models/wav2vec2/model_int8.onnx'];
+}
+
+function authStudentId(auth) {
+  if (!auth || typeof auth.student !== 'function') return '';
+  return String(auth.student() || '').trim();
+}
+
+function exposeBenchHook() {
+  if (!checkerReady) return;
+  try {
+    const id = authStudentId(window.MRJ_AUTH);
+    if (!String(id).toLowerCase().startsWith('zz_test')) return;
+    window.__mrjPronounceBench = (blob, english) => gradeBlob(blob, english, null, { hints: false });
+  } catch (_) {}
 }
 
 async function readBody(res, onChunk) {
@@ -862,8 +877,7 @@ function sheetView(flow, targets) {
     const id = targets[i].id;
     allow[id] = checkerReady && canStartMic({
       phase: flow.phase,
-      recording: flow.phase === 'part2' ? false : !!capture,
-      grading: part1Busy || rushInFlight > 0,
+      recording: false,
       timerRunning: running,
       lineOpen: lineOpenFor(flow, id),
     });
@@ -884,7 +898,7 @@ function sheetView(flow, targets) {
 }
 
 function clockSeconds(flow, now) {
-  const limit = flow.part2.limitSec || 60;
+  const limit = flow.part2.limitSec || timerSeconds(0);
   if (!flow.part2.startedAt || flow.part2.stoppedAt || flow.phase === 'results') return limit;
   const leftMs = limit * 1000 - (now - flow.part2.startedAt);
   return Math.max(0, Math.ceil(leftMs / 1000));
@@ -920,7 +934,7 @@ function rushBarHtml(flow) {
 }
 
 function timerSecondsSafe(flow) {
-  return flow.part2.limitSec === 90 ? 90 : 60;
+  return flow.part2.limitSec || timerSeconds(0);
 }
 
 function teacherMeaning(target) {
@@ -945,7 +959,6 @@ function teacherBlockHtml(targets, ready, flow) {
     const allowed = checkerReady && canStartMic({
       phase: 'teacher',
       recording: !!capture,
-      grading: part1Busy || rushInFlight > 0,
       timerRunning: false,
       lineOpen: true,
     });
@@ -1231,7 +1244,7 @@ function doorPassHook(meta) {
 async function gradeRush(meta, blob) {
   rushInFlight += 1;
   try {
-    const graded = await gradeBlob(blob, meta.gradeText, doorPassHook(meta));
+    const graded = await gradeBlob(blob, meta.gradeText, doorPassHook(meta), { hints: false });
     const flow = noteRushGrade(loadUnitFlow(meta.bookId, meta.unitId), meta.scoreKey, graded);
     saveUnitFlow(meta.bookId, meta.unitId, flow);
   } catch (err) {
@@ -1259,7 +1272,7 @@ async function gradeStudentOrTeacher(meta, blob) {
   let graded = null;
   let thrown = null;
   try {
-    graded = await gradeBlob(blob, meta.gradeText, doorPassHook(meta));
+    graded = await gradeBlob(blob, meta.gradeText, doorPassHook(meta), { hints: meta.phase !== 'part2' });
   } catch (err) {
     thrown = err;
     console.error(err);
@@ -1408,11 +1421,11 @@ function weakWords(result) {
   return (result.words || []).filter((w) => (w.score || 0) < PASS_SCORE).map((w) => w.word);
 }
 
-async function gradeBlob(blob, english, hooks) {
+async function gradeBlob(blob, english, hooks, gradeOpts) {
   if (GRADER === 'citrinet-trial') {
     const target = scoringTarget(english);
     const samples = await decodeAudioToMono(blob, 16000);
-    const graded = await gradeTrialSamples(samples, target, CITRINET_PASS, hooks);
+    const graded = await gradeTrialSamples(samples, target, CITRINET_PASS, hooks, gradeOpts);
     return graded.result;
   }
   const target = scoringTarget(english);
@@ -1533,7 +1546,6 @@ async function onMic(btn) {
   if (!canStartMic({
     phase: flowNow.phase,
     recording: false,
-    grading: part1Busy || rushInFlight > 0,
     timerRunning: timerRunning(flowNow),
     lineOpen: lineOpenFor(flowNow, scoreKey),
   })) return;
@@ -1559,7 +1571,6 @@ async function onMic(btn) {
   if (token !== armToken || capture || !canStartMic({
     phase: flow.phase,
     recording: false,
-    grading: part1Busy || rushInFlight > 0,
     timerRunning: timerRunning(flow),
     lineOpen: lineOpenFor(flow, scoreKey),
   })) {
@@ -1595,7 +1606,7 @@ async function onMic(btn) {
 
 function onRushStart() {
   const r = route();
-  if (r.name !== 'sheet' || !checkerReady || capture || part1Busy) return;
+  if (r.name !== 'sheet' || !checkerReady || capture) return;
   const flow = startTimer(loadUnitFlow(r.bookId, r.unitId), Date.now());
   saveUnitFlow(r.bookId, r.unitId, flow);
   render();
@@ -1661,6 +1672,10 @@ if (appEl) {
       gradingScoreKey = null;
       render();
     });
+  });
+
+  window.addEventListener('mrj-auth-ready', () => {
+    exposeBenchHook();
   });
 
   fillLangMenu();
